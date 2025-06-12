@@ -599,7 +599,8 @@ async def match_all(interaction: discord.Interaction):
 
     # --- 状態リセット ---
     try:
-        forwarded_message_ids = {source_channel_girls.id: set(), source_channel_boys.id: set()}
+        # NOTE: keep forwarded_message_ids so forwarded messages remain tracked
+        # forwarded_message_ids = {source_channel_girls.id: set(), source_channel_boys.id: set()}
         message_map.clear()
         active_claimable_messages.clear()
         claimed_messages.clear()
