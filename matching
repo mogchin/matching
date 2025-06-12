@@ -71,11 +71,7 @@ def allowed_role_check(interaction: discord.Interaction) -> bool:
     """EXECUTE_ROLE_IDを持つ人のみ実行可"""
     return any(role.id == EXECUTE_ROLE_ID for role in interaction.user.roles)
 
-# ------------------------------------------------------
-# ★★★修正ポイント★★★
-# 未当選者リストを「削除→新規投稿」ではなく
-# 「既存メッセージがあれば編集、なければ新規投稿」する関数に変更
-# ------------------------------------------------------
+# --- Utility Functions ---
 async def post_list_message(channel: discord.TextChannel, content: str, old_message_id: int) -> Tuple[int, List[str]]:
     """
     既存メッセージを編集し、存在しなければ新規送信する。
@@ -87,23 +83,19 @@ async def post_list_message(channel: discord.TextChannel, content: str, old_mess
         errors.append("エラー: 対象チャンネルが見つかりません。")
         return None, errors
 
-    # 1) old_message_id があれば編集を試みる
     if old_message_id:
         try:
             old_msg = await channel.fetch_message(old_message_id)
-            # メッセージの編集
             await old_msg.edit(content=content)
             new_message_id = old_msg.id
-            return new_message_id, errors  # 編集成功なので終了
+            return new_message_id, errors
         except discord.NotFound:
-            # 存在しなかった場合は新規送信へ
             pass
         except discord.Forbidden:
             errors.append(f"警告: チャンネル '{channel.name}' のメッセージを編集する権限がありません。")
         except Exception as e:
             errors.append(f"編集時エラー({channel.name}): {e}")
 
-    # 2) 新規送信
     try:
         sent_msg = await channel.send(content)
         new_message_id = sent_msg.id
@@ -114,7 +106,6 @@ async def post_list_message(channel: discord.TextChannel, content: str, old_mess
 
     return new_message_id, errors
 
-# --- Calculate Non-Winner List Content ---
 async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, List[str]]:
     """
     未当選者リストの内容を計算する。
@@ -123,8 +114,8 @@ async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, 
     global target_channel_boys, target_channel_girls, message_map, claimed_messages
     calc_errors: List[str] = []
 
-    role_girls_id = 1304664940019187762  # 女子用ロールID
-    role_boys_id = 1106457108070801449   # 男子用ロールID
+    role_girls_id = 1304664940019187762
+    role_boys_id = 1106457108070801449
 
     role_girls = guild.get_role(role_girls_id)
     role_boys = guild.get_role(role_boys_id)
@@ -132,7 +123,6 @@ async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, 
     winners_girls = set()
     winners_boys = set()
 
-    # 当選済みユーザーをセットに入れる
     for fwd_id, claimer_id in claimed_messages.items():
         original_author_id = None
         dest_channel_id = None
@@ -156,7 +146,6 @@ async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, 
         else:
             calc_errors.append(f"転送先チャンネルID {dest_channel_id} が不明です。")
 
-    # 男子の未当選者(かつ待機VC接続中)
     non_winners_boys = []
     if role_boys:
         for m in role_boys.members:
@@ -166,7 +155,6 @@ async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, 
                 and m.voice.channel.id == WAITING_VOICE_CHANNEL_ID):
                 non_winners_boys.append(m.mention)
 
-    # 女子の未当選者(かつ待機VC接続中)
     non_winners_girls = []
     if role_girls:
         for m in role_girls.members:
@@ -181,6 +169,7 @@ async def calculate_non_winner_content(guild: discord.Guild) -> Tuple[str, str, 
 
     return content_boys, content_girls, calc_errors
 
+# --- Bot Events ---
 @bot.event
 async def on_ready():
     global source_channel_girls, source_channel_boys
@@ -218,10 +207,6 @@ async def on_ready():
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
-    """
-    転送元メッセージが編集された場合、転送先も同様に編集する。
-    ※ claimed_messages かどうかに関わらず常に更新
-    """
     if before.author.bot or before.id not in message_map:
         return
 
@@ -233,7 +218,6 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     try:
         f_msg = await destination_channel.fetch_message(forwarded_message_id)
     except discord.NotFound:
-        # 転送先メッセージが既に消されている場合など
         return
     except Exception as e:
         print(f"[on_message_edit] 転送先メッセージ取得エラー: {e}")
@@ -250,18 +234,13 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     except Exception as e:
         print(f"[on_message_edit] 転送先更新エラー: {e}")
 
-
 @bot.event
 async def on_message_delete(message: discord.Message):
-    """
-    転送元メッセージが削除されたら、転送先も削除する。
-    """
     global last_non_winner_message_boys_id, last_non_winner_message_girls_id
 
     if message.author.bot or message.id not in message_map:
         return
 
-    # 転送先メッセージ情報を取得して削除
     forwarded_message_id, destination_channel_id, _ = message_map.pop(message.id)
     destination_channel = bot.get_channel(destination_channel_id)
 
@@ -280,7 +259,6 @@ async def on_message_delete(message: discord.Message):
         except Exception as e:
             print(f"[on_message_delete] 転送先メッセージ削除エラー: {e}")
 
-    # 未当選者リスト再掲
     try:
         if message.guild:
             content_boys, content_girls, calc_errors = await calculate_non_winner_content(message.guild)
@@ -301,7 +279,6 @@ async def on_message_delete(message: discord.Message):
                     last_non_winner_message_girls_id = new_id
                 for err in errors:
                     print(f"[on_message_delete] 女子未当選リスト投稿エラー: {err}")
-
     except Exception as e:
         print(f"[on_message_delete] 未当選者リスト再更新エラー: {e}")
 
@@ -312,11 +289,9 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
 
     guild = bot.get_guild(payload.guild_id)
-    if not guild:
-        return
+    if not guild: return
     channel = guild.get_channel(payload.channel_id)
-    if not isinstance(channel, discord.TextChannel):
-        return
+    if not isinstance(channel, discord.TextChannel): return
 
     try:
         message = await channel.fetch_message(payload.message_id)
@@ -325,23 +300,18 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
 
     member = payload.member or (await guild.fetch_member(payload.user_id))
-    if payload.message_id not in active_claimable_messages:
-        return
+    if payload.message_id not in active_claimable_messages: return
 
-    # 条件を満たさない場合、リアクション除去して終了
     if (
         payload.message_id in claimed_messages or
         payload.user_id in users_who_claimed_this_round or
         not (member.voice and member.voice.channel and member.voice.channel.id == WAITING_VOICE_CHANNEL_ID) or
         not any(role.id in ALLOWED_ROLE_IDS for role in member.roles)
     ):
-        try:
-            await message.remove_reaction(payload.emoji, member)
-        except:
-            pass
+        try: await message.remove_reaction(payload.emoji, member)
+        except: pass
         return
 
-    # Claim
     claimed_messages[payload.message_id] = payload.user_id
     users_who_claimed_this_round.add(payload.user_id)
     active_claimable_messages.remove(payload.message_id)
@@ -353,9 +323,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             new_embed = message.embeds[0].copy()
             selector_index = -1
             for i, field in enumerate(new_embed.fields):
-                if field.name == "選択者":
-                    selector_index = i
-                    break
+                if field.name == "選択者": selector_index = i; break
             if selector_index != -1:
                 new_embed.set_field_at(selector_index, name="選択者", value=f"✅ {member.mention}", inline=False)
             else:
@@ -364,81 +332,50 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         else:
             await message.edit(content=message.content + f"\n✅ {member.mention} さんが選択しました！")
 
-        # 未当選者リスト更新
-        content_boys, content_girls, calc_errors = await calculate_non_winner_content(guild)
-        if calc_errors:
-            print(f"リアクション時リスト計算エラー: {calc_errors}")
-
+        content_boys, content_girls, _ = await calculate_non_winner_content(guild)
         if target_channel_boys and any(v[1] == target_channel_boys.id for v in message_map.values()):
-            new_id, errors = await post_list_message(target_channel_boys, content_boys, last_non_winner_message_boys_id)
-            if new_id:
-                last_non_winner_message_boys_id = new_id
-
+            new_id, _ = await post_list_message(target_channel_boys, content_boys, last_non_winner_message_boys_id)
+            if new_id: last_non_winner_message_boys_id = new_id
         if target_channel_girls and any(v[1] == target_channel_girls.id for v in message_map.values()):
-            new_id, errors = await post_list_message(target_channel_girls, content_girls, last_non_winner_message_girls_id)
-            if new_id:
-                last_non_winner_message_girls_id = new_id
-
+            new_id, _ = await post_list_message(target_channel_girls, content_girls, last_non_winner_message_girls_id)
+            if new_id: last_non_winner_message_girls_id = new_id
     except Exception as e:
         print(f"リアクション更新エラー: {e}")
-        # ロールバック
         claimed_messages.pop(payload.message_id, None)
         users_who_claimed_this_round.discard(payload.user_id)
         active_claimable_messages.add(payload.message_id)
 
+# --- Slash Commands ---
 @bot.tree.command(name="send1", description="回答を転送し、未当選者リストを更新")
 @app_commands.check(allowed_role_check)
 async def send_messages(interaction: discord.Interaction):
-    global forwarded_message_ids, message_map, active_claimable_messages
-    global last_non_winner_message_boys_id, last_non_winner_message_girls_id
-
+    global forwarded_message_ids, message_map, active_claimable_messages, last_non_winner_message_boys_id, last_non_winner_message_girls_id
     if not all([source_channel_girls, source_channel_boys, target_channel_girls, target_channel_boys]):
         await interaction.response.send_message("エラー: 必要なチャンネルが設定されていません。", ephemeral=True)
         return
-
     await interaction.response.defer(ephemeral=True)
-    total_forwarded_count = 0
     error_messages_list: List[str] = []
-
-    async def process_channel(source_channel: discord.TextChannel,
-                              target_channel: discord.TextChannel,
-                              embed_color: discord.Color) -> int:
-        nonlocal total_forwarded_count
+    
+    async def process_channel(source_channel, target_channel, embed_color):
         count = 0
         try:
-            source_messages = []
-            async for msg in source_channel.history(limit=None, after=bot_start_time):
-                if (not msg.author.bot and
-                    msg.id not in forwarded_message_ids.get(source_channel.id, set()) and
-                    msg.id not in message_map and (msg.content or msg.attachments)):
-                    source_messages.append(msg)
-
+            source_messages = [
+                msg async for msg in source_channel.history(limit=None, after=bot_start_time)
+                if not msg.author.bot and msg.id not in forwarded_message_ids.get(source_channel.id, set()) and msg.id not in message_map and (msg.content or msg.attachments)
+            ]
             random.shuffle(source_messages)
             for orig_msg in source_messages:
                 try:
-                    embed = discord.Embed(
-                        description=orig_msg.content if orig_msg.content else "(本文なし)",
-                        color=embed_color,
-                        timestamp=orig_msg.created_at
-                    )
-
-                    image_url = None
-                    for att in orig_msg.attachments:
-                        if att.content_type and att.content_type.startswith('image/'):
-                            image_url = att.url
-                            break
+                    embed = discord.Embed(description=orig_msg.content if orig_msg.content else "(本文なし)", color=embed_color, timestamp=orig_msg.created_at)
+                    image_url = next((att.url for att in orig_msg.attachments if att.content_type and att.content_type.startswith('image/')), None)
                     if image_url:
                         embed.set_image(url=image_url)
-
                     others = [att.filename for att in orig_msg.attachments if att.url != image_url]
                     if others:
                         embed.add_field(name="添付ファイル", value="\n".join(f"- {name}" for name in others), inline=False)
-
                     embed.add_field(name="選択者", value="なし", inline=False)
-
                     fwd_msg = await target_channel.send(embed=embed)
                     await fwd_msg.add_reaction("👍")
-
                     forwarded_message_ids[source_channel.id].add(orig_msg.id)
                     message_map[orig_msg.id] = (fwd_msg.id, target_channel.id, orig_msg.author.id)
                     active_claimable_messages.add(fwd_msg.id)
@@ -447,47 +384,44 @@ async def send_messages(interaction: discord.Interaction):
                 except Exception as e:
                     error_messages_list.append(f"転送中エラー (ID:{orig_msg.id}): {e}")
             return count
-
         except Exception as e:
             error_messages_list.append(f"{source_channel.name} 処理中エラー: {e}")
             return count
 
-    # 女子回答 -> 男子選択 (color=fuchsia)
     count_g = await process_channel(source_channel_girls, target_channel_boys, discord.Color.fuchsia())
-    # 男子回答 -> 女子選択 (color=blue)
     count_b = await process_channel(source_channel_boys, target_channel_girls, discord.Color.blue())
     total_forwarded_count = count_g + count_b
 
     if total_forwarded_count > 0 and interaction.guild:
         content_boys, content_girls, calc_errors = await calculate_non_winner_content(interaction.guild)
         error_messages_list.extend(calc_errors)
-
         if target_channel_boys and any(v[1] == target_channel_boys.id for v in message_map.values()):
             new_id, post_err = await post_list_message(target_channel_boys, content_boys, last_non_winner_message_boys_id)
-            if new_id:
-                last_non_winner_message_boys_id = new_id
+            if new_id: last_non_winner_message_boys_id = new_id
             error_messages_list.extend(post_err)
-
         if target_channel_girls and any(v[1] == target_channel_girls.id for v in message_map.values()):
             new_id, post_err = await post_list_message(target_channel_girls, content_girls, last_non_winner_message_girls_id)
-            if new_id:
-                last_non_winner_message_girls_id = new_id
+            if new_id: last_non_winner_message_girls_id = new_id
             error_messages_list.extend(post_err)
-    else:
-        print("転送されたメッセージが0件のため、未当選者リストの更新をスキップします。")
-
+    
     result_msg = f"合計 {total_forwarded_count} 件の新規転送完了。"
     if error_messages_list:
-        result_msg += "\nエラー/警告:\n" + "\n".join(f"{i+1}. {msg}" for i, msg in enumerate(error_messages_list))
+        result_msg += "\nエラー/警告:\n" + "\n".join(f"- {msg}" for msg in error_messages_list)
     else:
         result_msg += "\n未当選者リストを更新しました。"
-
     await interaction.followup.send(result_msg, ephemeral=True)
 
-
+# ===================================================================
+# ★★★ /match コマンド（guild.chunk 完全削除版） ★★★
+# ===================================================================
 @bot.tree.command(name="match", description="ペア移動＆状態リセット＆リスト更新")
 @app_commands.check(allowed_role_check)
 async def match_all(interaction: discord.Interaction):
+    """
+    選択済みペアを VC へ移動し、状態をリセットする高速版
+    ※ Guild.query_members(user_ids=…) で一括取得
+    """
+    # ---- グローバル ----------------------------------------------------
     global current_match_channel_index, matched_pairs
     global forwarded_message_ids, message_map, active_claimable_messages
     global claimed_messages, users_who_claimed_this_round
@@ -495,194 +429,255 @@ async def match_all(interaction: discord.Interaction):
     global source_channel_girls, source_channel_boys, target_channel_boys, target_channel_girls
 
     await interaction.response.defer(ephemeral=True)
-    moved_count = 0
-    error_messages_list: List[str] = []
-
-    guild = interaction.guild
-    if not guild:
+    guild: discord.Guild | None = interaction.guild
+    if guild is None:
         await interaction.followup.send("サーバー情報取得エラー", ephemeral=True)
         return
 
-    items = list(message_map.items())
-    for orig_id, (fwd_id, dest_id, orig_author_id) in items:
-        # 未選択 or 既にmatch済みのものはスキップ
+    # ---- 1. ペア収集 ---------------------------------------------------
+    pairs: list[dict] = []
+    need_ids: set[int] = set()
+    logs: list[str]  = []
+
+    for o_id, (fwd_id, dest_id, author_id) in list(message_map.items()):
         if fwd_id not in claimed_messages or fwd_id in matched_pairs:
+            continue
+        if current_match_channel_index >= len(VOICE_CHANNEL_IDS):
+            logs.append("エラー: 移動先 VC が不足したため残りをスキップ。")
+            break
+
+        vc = guild.get_channel(VOICE_CHANNEL_IDS[current_match_channel_index])
+        if not isinstance(vc, discord.VoiceChannel):
+            logs.append(f"警告: VC {VOICE_CHANNEL_IDS[current_match_channel_index]} が見つかりません。")
             continue
 
         claimer_id = claimed_messages[fwd_id]
-        pair_boy = None
-        pair_girl = None
-        target_txt = guild.get_channel(dest_id)
+        pairs.append({
+            "orig_id": o_id, "fwd_id": fwd_id, "dest_id": dest_id,
+            "author_id": author_id, "claimer_id": claimer_id, "vc": vc
+        })
+        need_ids.update((author_id, claimer_id))
+        current_match_channel_index += 1
 
-        # チャンネルIDを見て投稿者を男女判定
+    # ---- 2. メンバー一括取得 -----------------------------------------
+    cache: dict[int, discord.Member] = {}
+    if need_ids:
         try:
-            if target_txt and dest_id == target_channel_boys.id:
-                pair_girl = await guild.fetch_member(orig_author_id)
-                pair_boy = await guild.fetch_member(claimer_id)
-            elif target_txt and dest_id == target_channel_girls.id:
-                pair_boy = await guild.fetch_member(orig_author_id)
-                pair_girl = await guild.fetch_member(claimer_id)
-            else:
-                continue
+            members = await guild.query_members(limit=None, user_ids=list(need_ids)).flatten()
+            cache = {m.id: m for m in members}
+        except AttributeError:             # さらに古いバージョン対策
+            for uid in need_ids:
+                try:
+                    cache[uid] = await guild.fetch_member(uid)
+                except discord.NotFound:
+                    pass
+                except Exception as e:
+                    logs.append(f"fetch_member 失敗 ({uid}): {e}")
         except Exception as e:
-            error_messages_list.append(f"ペア取得エラー (origMsgID:{orig_id}): {e}")
-            continue
+            await interaction.followup.send(f"メンバー情報取得エラー: {e}", ephemeral=True)
+            return
 
-        # 待機VCにいないならスキップ
-        if not (pair_boy and pair_boy.voice and pair_boy.voice.channel and pair_boy.voice.channel.id == WAITING_VOICE_CHANNEL_ID):
-            error_messages_list.append(f"{pair_boy.display_name} 待機VC未在中 (origMsgID:{orig_id})")
-            continue
-        if not (pair_girl and pair_girl.voice and pair_girl.voice.channel and pair_girl.voice.channel.id == WAITING_VOICE_CHANNEL_ID):
-            error_messages_list.append(f"{pair_girl.display_name} 待機VC未在中 (origMsgID:{orig_id})")
-            continue
-
-        # VC移動
-        if current_match_channel_index >= len(VOICE_CHANNEL_IDS):
-            error_messages_list.append("利用可能なVCが足りません。")
-            break
-
-        target_vc = guild.get_channel(VOICE_CHANNEL_IDS[current_match_channel_index])
-        if not target_vc or not isinstance(target_vc, discord.VoiceChannel):
-            error_messages_list.append(f"移動先VCが不正 (ID:{VOICE_CHANNEL_IDS[current_match_channel_index]})")
-            continue
+    # ---- 3. ペアごとの処理 -------------------------------------------
+    async def handle(pair: dict) -> tuple[bool, str]:
+        fwd   = pair["fwd_id"]
+        dest  = pair["dest_id"]
+        a_id  = pair["author_id"]
+        c_id  = pair["claimer_id"]
+        vc    = pair["vc"]
 
         try:
-            await pair_boy.move_to(target_vc)
-            await pair_girl.move_to(target_vc)
-            matched_pairs.add(fwd_id)
-            current_match_channel_index += 1
-            moved_count += 1
+            m1 = cache.get(a_id); m2 = cache.get(c_id)
+            if not m1 or not m2:
+                return False, f"メンバー未取得 (Fwd:{fwd})"
+
+            for m in (m1, m2):
+                if not (m.voice and m.voice.channel and m.voice.channel.id == WAITING_VOICE_CHANNEL_ID):
+                    return False, f"{m.display_name} が待機 VC にいません"
+
+            await asyncio.gather(m1.move_to(vc), m2.move_to(vc))
+
+            txt = guild.get_channel(dest)
+            if isinstance(txt, discord.TextChannel):
+                msg = await txt.fetch_message(fwd)
+                if msg.embeds:
+                    emb = msg.embeds[0].copy()
+                    idx = {f.name: i for i, f in enumerate(emb.fields)}
+                    status = f"✅ 移動完了 ({vc.mention})"
+                    emb.set_field_at(idx.get("状態", len(emb.fields)),
+                                     name="状態", value=status, inline=False,
+                                     insert=True)
+                    emb.set_field_at(idx.get("回答者", len(emb.fields)),
+                                     name="回答者", value=m1.mention, inline=False,
+                                     insert=True)
+                    await msg.edit(embed=emb)
+            return True, str(fwd)
         except Exception as e:
-            error_messages_list.append(f"VC移動エラー ({target_vc.name}): {e}")
-            continue
+            return False, f"処理エラー (Fwd:{fwd}): {e}"
 
-        # Embed更新(「状態」「回答者」を追記)
-        try:
-            if target_txt:
-                f_msg = await target_txt.fetch_message(fwd_id)
-                if f_msg.embeds:
-                    new_embed = f_msg.embeds[0].copy()
-                    # 状態フィールド
-                    status_idx = -1
-                    for i, field in enumerate(new_embed.fields):
-                        if field.name == "状態":
-                            status_idx = i
-                            break
-                    status_val = f"✅ 移動完了 ({target_vc.mention})"
-                    if status_idx != -1:
-                        new_embed.set_field_at(status_idx, name="状態", value=status_val, inline=False)
-                    else:
-                        new_embed.add_field(name="状態", value=status_val, inline=False)
+    ok_cnt = 0
+    for ok, note in await asyncio.gather(*(handle(p) for p in pairs)):
+        if ok:
+            ok_cnt += 1
+            matched_pairs.add(int(note))
+        else:
+            logs.append(f"警告: {note}")
 
-                    # 回答者フィールド
-                    answerer_idx = -1
-                    for i, field in enumerate(new_embed.fields):
-                        if field.name == "回答者":
-                            answerer_idx = i
-                            break
-                    if dest_id == target_channel_boys.id:
-                        answerer_val = f"{pair_girl.mention}"
-                    else:
-                        answerer_val = f"{pair_boy.mention}"
+    # ---- 4. 後片付け ---------------------------------------------------
+    processed_oids  = {p["orig_id"] for p in pairs if p["fwd_id"] in matched_pairs}
+    processed_cids  = {p["claimer_id"] for p in pairs if p["fwd_id"] in matched_pairs}
 
-                    if answerer_idx != -1:
-                        new_embed.set_field_at(answerer_idx, name="回答者", value=answerer_val, inline=False)
-                    else:
-                        new_embed.add_field(name="回答者", value=answerer_val, inline=False)
+    for oid in processed_oids:
+        message_map.pop(oid, None)
+    for fid in matched_pairs:
+        claimed_messages.pop(fid, None)
+        active_claimable_messages.discard(fid)
 
-                    await f_msg.edit(embed=new_embed)
+    users_who_claimed_this_round -= processed_cids
+    matched_pairs.clear()
+    current_match_channel_index = 0
+    last_non_winner_message_boys_id = None
+    last_non_winner_message_girls_id = None
 
-        except Exception as e:
-            error_messages_list.append(f"Embed更新警告 (FwdMsgID:{fwd_id}): {e}")
-
-        await asyncio.sleep(0.5)
-
-    # --- 状態リセット ---
+    # ---- 5. 未当選者リスト更新 ----------------------------------------
     try:
-        # NOTE: keep forwarded_message_ids so forwarded messages remain tracked
-        # forwarded_message_ids = {source_channel_girls.id: set(), source_channel_boys.id: set()}
-        message_map.clear()
-        active_claimable_messages.clear()
-        claimed_messages.clear()
-        users_who_claimed_this_round.clear()
-        matched_pairs.clear()
-        current_match_channel_index = 0
-        last_non_winner_message_boys_id = None
-        last_non_winner_message_girls_id = None
+        boys, girls, errs = await calculate_non_winner_content(guild)
+        logs.extend(errs)
+        if target_channel_boys:
+            new, err = await post_list_message(target_channel_boys, boys, last_non_winner_message_boys_id)
+            if new: last_non_winner_message_boys_id = new
+            logs.extend(err)
+        if target_channel_girls:
+            new, err = await post_list_message(target_channel_girls, girls, last_non_winner_message_girls_id)
+            if new: last_non_winner_message_girls_id = new
+            logs.extend(err)
     except Exception as e:
-        error_messages_list.append(f"状態リセットエラー: {e}")
+        logs.append(f"未当選者リスト更新エラー: {e}")
 
-    # 未当選者リスト再更新
-    try:
-        content_boys, content_girls, calc_errors = await calculate_non_winner_content(guild)
-        error_messages_list.extend(calc_errors)
-
-        if target_channel_boys and any(v[1] == target_channel_boys.id for v in message_map.values()):
-            new_id, errs = await post_list_message(target_channel_boys, content_boys, last_non_winner_message_boys_id)
-            if new_id:
-                last_non_winner_message_boys_id = new_id
-            error_messages_list.extend(errs)
-
-        if target_channel_girls and any(v[1] == target_channel_girls.id for v in message_map.values()):
-            new_id, errs = await post_list_message(target_channel_girls, content_girls, last_non_winner_message_girls_id)
-            if new_id:
-                last_non_winner_message_girls_id = new_id
-            error_messages_list.extend(errs)
-
-    except Exception as e:
-        error_messages_list.append(f"リスト更新後エラー: {e}")
-
-    resp = f"ペア移動 {moved_count} 組完了。"
-    if error_messages_list:
-        resp += "\nエラー/警告:\n" + "\n".join(f"{i+1}. {msg}" for i, msg in enumerate(error_messages_list))
+    # ---- 6. 返信 -------------------------------------------------------
+    msg = f"ペア移動 {ok_cnt} 組完了。"
+    if logs:
+        msg += "\nエラー/警告:\n" + "\n".join(f"- {l}" for l in logs)
     else:
-        resp += "\n状態リセット・リスト更新完了。"
+        msg += "\n状態リセット・リスト更新完了。"
+    await interaction.followup.send(msg, ephemeral=True)
 
-    await interaction.followup.send(resp, ephemeral=True)
 
 
-@bot.tree.command(name="reset", description="途中でトラブルがあった場合などに、強制的に状態をリセットします")
+@bot.tree.command(name="reset-reactions", description="すべての選択肢のリアクションをリセットし、未選択の状態に戻します。")
 @app_commands.check(allowed_role_check)
-async def reset_command(interaction: discord.Interaction):
+async def reset_all_reactions(interaction: discord.Interaction):
     """
-    転送されたメッセージをすべて消去し、内部管理用の状態も初期化する。
+    現在アクティブな全てのメッセージの選択状態をリセットする。
+    メッセージは削除せず、リアクションと内部状態のみを初期化する。
     """
-    # ここで使うグローバル変数を先に宣言
-    global forwarded_message_ids, message_map, active_claimable_messages
-    global claimed_messages, users_who_claimed_this_round, matched_pairs
-    global current_match_channel_index
+    global claimed_messages, users_who_claimed_this_round, active_claimable_messages
     global last_non_winner_message_boys_id, last_non_winner_message_girls_id
-    global source_channel_girls, source_channel_boys
 
     await interaction.response.defer(ephemeral=True)
 
-    error_messages_list: List[str] = []
+    guild = interaction.guild
+    if not guild:
+        await interaction.followup.send("サーバー情報の取得に失敗しました。", ephemeral=True)
+        return
+
+    if not message_map:
+        await interaction.followup.send("リセット対象のメッセージがありません。", ephemeral=True)
+        return
+
+    error_log = []
+    success_count = 0
+
+    async def reset_one_message(fwd_id: int, dest_id: int):
+        try:
+            channel = guild.get_channel(dest_id)
+            if not channel or not isinstance(channel, discord.TextChannel):
+                return (False, f"チャンネルが見つかりません (ID: {dest_id})")
+            
+            message = await channel.fetch_message(fwd_id)
+            await message.clear_reactions()
+            await message.add_reaction('👍')
+            
+            if message.embeds:
+                new_embed = message.embeds[0].copy()
+                for i, field in enumerate(new_embed.fields):
+                    if field.name == "選択者":
+                        new_embed.set_field_at(i, name="選択者", value="なし", inline=False)
+                        await message.edit(embed=new_embed)
+                        break
+            return (True, f"メッセージ {fwd_id} をリセットしました。")
+        except discord.NotFound:
+            return (False, f"メッセージが見つかりません (ID: {fwd_id})")
+        except Exception as e:
+            return (False, f"メッセージ {fwd_id} のリセット中にエラー: {e}")
+
+    tasks = [reset_one_message(fwd_id, dest_id) for _, (fwd_id, dest_id, _) in message_map.items()]
+    results = await asyncio.gather(*tasks)
+
+    for success, message in results:
+        if success:
+            success_count += 1
+        else:
+            error_log.append(message)
+    
+    active_claimable_messages.clear()
+    active_claimable_messages.update([val[0] for val in message_map.values()])
+    claimed_messages.clear()
+    users_who_claimed_this_round.clear()
+
+    try:
+        content_boys, content_girls, calc_errors = await calculate_non_winner_content(guild)
+        error_log.extend(calc_errors)
+
+        if target_channel_boys:
+            new_id, post_errs = await post_list_message(target_channel_boys, content_boys, last_non_winner_message_boys_id)
+            if new_id: last_non_winner_message_boys_id = new_id
+            error_log.extend(post_errs)
+
+        if target_channel_girls:
+            new_id, post_errs = await post_list_message(target_channel_girls, content_girls, last_non_winner_message_girls_id)
+            if new_id: last_non_winner_message_girls_id = new_id
+            error_log.extend(post_errs)
+            
+    except Exception as e:
+        error_log.append(f"未当選者リストの更新中にエラーが発生しました: {e}")
+
+    response_message = f"{success_count}件のメッセージのリアクションをリセットしました。"
+    if error_log:
+        error_summary = "\n".join(f"- {err}" for err in error_log)
+        response_message += f"\n\n以下の警告があります:\n{error_summary}"
+
+    await interaction.followup.send(response_message, ephemeral=True)
+
+@bot.tree.command(name="reset", description="すべての状態を強制的にリセットします（メッセージも削除）")
+@app_commands.check(allowed_role_check)
+async def reset_command(interaction: discord.Interaction):
+    global forwarded_message_ids, message_map, active_claimable_messages, claimed_messages, users_who_claimed_this_round, matched_pairs, current_match_channel_index, last_non_winner_message_boys_id, last_non_winner_message_girls_id, source_channel_girls, source_channel_boys
+    await interaction.response.defer(ephemeral=True)
+    error_messages_list = []
     guild = interaction.guild
     if not guild:
         await interaction.followup.send("サーバー情報取得エラー", ephemeral=True)
         return
-
-    # 1) 転送先メッセージを一括削除（不要ならコメントアウト）
+        
     try:
-        for orig_id, (fwd_id, dest_id, _orig_author) in list(message_map.items()):
+        tasks = []
+        for _, (fwd_id, dest_id, _) in list(message_map.items()):
             channel = bot.get_channel(dest_id)
             if channel and isinstance(channel, discord.TextChannel):
-                try:
-                    msg = await channel.fetch_message(fwd_id)
-                    await msg.delete()
-                except discord.NotFound:
-                    pass
-                except Exception as e:
-                    error_messages_list.append(f"転送先メッセージ削除エラー (ID:{fwd_id}): {e}")
+                async def delete_msg(ch, msg_id):
+                    try:
+                        await (await ch.fetch_message(msg_id)).delete()
+                    except: pass
+                tasks.append(delete_msg(channel, fwd_id))
+        await asyncio.gather(*tasks)
     except Exception as e:
         error_messages_list.append(f"一括削除中エラー: {e}")
-
-    # 2) 各種状態をクリア
+        
     try:
-        forwarded_message_ids = {
-            source_channel_girls.id: set(),
-            source_channel_boys.id: set()
-        } if (source_channel_girls and source_channel_boys) else {}
+        if source_channel_girls and source_channel_boys:
+            forwarded_message_ids = {source_channel_girls.id: set(), source_channel_boys.id: set()}
+        else:
+            forwarded_message_ids = {}
         message_map.clear()
         active_claimable_messages.clear()
         claimed_messages.clear()
@@ -693,15 +688,12 @@ async def reset_command(interaction: discord.Interaction):
         last_non_winner_message_girls_id = None
     except Exception as e:
         error_messages_list.append(f"状態初期化中エラー: {e}")
-
-    # 3) 最終結果を返信
+        
     if error_messages_list:
-        result_msg = "リセット完了（警告あり）:\n" + "\n".join(f"{i+1}. {m}" for i, m in enumerate(error_messages_list))
+        result_msg = "リセット完了（警告あり）:\n" + "\n".join(f"- {m}" for m in error_messages_list)
     else:
         result_msg = "すべての状態をリセットしました。"
-
     await interaction.followup.send(result_msg, ephemeral=True)
-
 
 # --- Bot Execution ---
 if TOKEN:
