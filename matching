@@ -40,6 +40,9 @@ VOICE_CHANNEL_IDS = [
 # Waiting Voice Channel ID (ユーザーが選択する際の待機VC)
 WAITING_VOICE_CHANNEL_ID = 1059809361645551746
 
+# Delay between moving each matched pair (seconds)
+MATCH_MOVE_DELAY = 0.1
+
 # --- Bot Setup ---
 intents = discord.Intents.default()
 intents.messages = True
@@ -595,7 +598,7 @@ async def match_all(interaction: discord.Interaction):
         except Exception as e:
             error_messages_list.append(f"Embed更新警告 (FwdMsgID:{fwd_id}): {e}")
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(MATCH_MOVE_DELAY)
 
     # --- 状態リセット ---
     try:
